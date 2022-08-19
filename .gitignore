@@ -3,3 +3,4 @@ Results/
 __pycache__/
 .idea/
 notebooks/.ipynb_checkpoints/
+.DS_store
