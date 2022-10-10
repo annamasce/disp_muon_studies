@@ -24,11 +24,7 @@ def delta_r(v1, v2):
 class MuonAnalysis(processor.ProcessorABC):
     def __init__(self):
         ds_axis = hist.Cat("ds", "Primary dataset")
-        acc_dict = {"ctau": hist.Hist(
-            "Counts",
-            ds_axis,
-            hist.Bin("ctau", "ctau [mm]", 100, 0, 500),
-        )}
+        acc_dict = {var: hist.Hist("Counts", ds_axis, axis) for var, axis in self.get_var_axis_pairs()}
         for stage in self.get_selections():
             acc_dict[f'n_ev_{stage}'] = processor.defaultdict_accumulator(int)
             # acc_dict[f'sumw_{stage}'] = processor.defaultdict_accumulator(float)
@@ -55,17 +51,36 @@ class MuonAnalysis(processor.ProcessorABC):
             "two_dsa",
             "dsa_selection",
             "gen_matching",
+            "lxy_cut",
             "converging_fit",
             "sv_prob_cut"
         ]
+
+    @staticmethod
+    def get_var_axis_pairs():
+
+        pt_dsa_axis = hist.Bin("pt_dsa", r"$p_{T}$ [GeV]", 20, 0., 600)
+        pt_err_axis = hist.Bin("pt_err", r"$p_{T}$ error/$p_{T}$", 20, 0., 1.2)
+        nhit_axis = hist.Bin('nhit', r'N(hits)', 71, -0.5, 70.5)
+        chi2ndof_axis = hist.Bin('chi2ndof', r'$\chi^2$/ndof', 20, 0., 5.)
+
+        v_a_pairs = [
+            ('pt_dsa_1', pt_dsa_axis),
+            ('pt_dsa_2', pt_dsa_axis),
+            ('err_div_pt_dsa_1', pt_err_axis),
+            ('err_div_pt_dsa_2', pt_err_axis),
+            ('nhits_dsa_1', nhit_axis),
+            ('nhits_dsa_2', nhit_axis),
+            ('chi2ndof_dsa_1', chi2ndof_axis),
+            ('chi2ndof_dsa_2', chi2ndof_axis),
+        ]
+
+        return v_a_pairs
 
     # we will receive a NanoEvents instead of a coffea DataFrame
     def process(self, events):
         out = self.accumulator.identity()
         ds = events.metadata["dataset"]
-        for var in self.get_array_vars():
-            out[f'num_{var}'][ds] = processor.column_accumulator(np.array([]))
-            out[f'den_{var}'][ds] = processor.column_accumulator(np.array([]))
 
         if "HNL" in ds:
             events["ll_mother"] = events.GenPart[(events.GenPart.pdgId == 9900012) & (events.GenPart.statusFlags >= 2 ** 13)]
@@ -82,14 +97,44 @@ class MuonAnalysis(processor.ProcessorABC):
         print("Events with 2 gen muons in acceptance:", len(events))
         out["n_ev_two_muons_acc"][ds] += len(events)
 
-        do_dsa_sel = True
-
-        events = self.process_den(events, out, ds, do_sel_dsa=do_dsa_sel)
-        events, dimuons = self.process_num(events, out, ds, do_sel=do_dsa_sel)
+        # save gen_dxy info
+        if "HNL" in ds:
+            # Currently SV info is not saved for gen muons in HNL samples, so gen_dxy is derived from ctau
+            events["gen_dxy"] = events.ctau / 10 * ak.flatten(events.ll_mother.pt, axis=-1) / ak.flatten(
+                events.ll_mother.mass, axis=-1)  # cm
+        else:
+            gen_vx = events.gen_muon[:, 0].vx
+            gen_vy = events.gen_muon[:, 0].vy
+            events["gen_dxy"] = np.sqrt(gen_vx ** 2 + gen_vy ** 2)
+        print(events.gen_dxy)
+        self.process_ds(events, out, ds)
+        if "2Mu2J" in ds:
+            self.process_ds(events, out, ds + " high Lxy", mode="high_Lxy")
+            self.process_ds(events, out, ds + " low Lxy", mode="low_Lxy")
 
         return out
 
+    def process_ds(self, events, out, ds, mode=""):
+        do_dsa_sel = True
+        for var in self.get_array_vars():
+            out[f'num_{var}'][ds] = processor.column_accumulator(np.array([]))
+            out[f'den_{var}'][ds] = processor.column_accumulator(np.array([]))
+        if mode == "high_Lxy":
+            print("Here I do stuff for high Lxy")
+            events = events[events.gen_dxy > 330]
+        elif mode == "low_Lxy":
+            print("Here I do stuff for low Lxy")
+            # events = events[(events.gen_dxy > 200) & (events.gen_dxy <= 330)]
+            events = events[events.gen_dxy <= 330]
+        else:
+            print("Here I do stuff for whole ds")
+        out["n_ev_lxy_cut"][ds] += len(events)
+        events = self.process_den(events, out, ds, do_sel_dsa=do_dsa_sel)
+        events, dimuons = self.process_num(events, out, ds, do_sel=do_dsa_sel)
+
+
     def process_den(self, events, out, ds, do_sel_dsa=True):
+        print("Total den events:", len(events))
         # Select events with at least 2 DSA muons
         events = events[ak.num(events.DSAMuon, axis=-1) >= 2]
         print("Den events with 2 DSA muons:", len(events))
@@ -112,12 +157,11 @@ class MuonAnalysis(processor.ProcessorABC):
         cut = self.unique_matching_selection(dsa_1, dsa_2, gen_muons)
         event_cut = (ak.sum(cut, axis=-1) > 0)
         events = events[event_cut]
+        dsa_1 = dsa_1[cut][event_cut]
+        dsa_2 = dsa_2[cut][event_cut]
         print("Den events after DSA matching with gen muons:", len(events))
         out["n_ev_gen_matching"][ds] += len(events)
-        # out["ctau"].fill(
-        #     ds=ds,
-        #     ctau=ak.flatten(events.ctau, axis=-1),
-        # )
+        self.fill_histos(events, out, ds, dsa_1, dsa_2)
         self.fill_arrays(events, out, ds, "den")
         return events
 
@@ -158,18 +202,8 @@ class MuonAnalysis(processor.ProcessorABC):
 
         return events, dimuons
 
-    def fill_arrays(self, events, out, ds, name):
-        if "HNL" in ds:
-            ctau = ak.to_numpy(ak.flatten(events.ctau, axis=None), False)  # mm
-            pt = ak.to_numpy(ak.flatten(events.ll_mother.pt, axis=None), False)
-            mass = ak.to_numpy(ak.flatten(events.ll_mother.mass, axis=None), False)
-            gen_dxy = ctau / 10 * pt / mass  # cm
-        else:
-            # vx, vy and vz saved in GenParticle collection
-            gen_vx = events.gen_muon[:, 0].vx
-            gen_vy = events.gen_muon[:, 0].vy
-            gen_dxy = np.sqrt(gen_vx ** 2 + gen_vy ** 2)
-        out[f"{name}_dxy_gen"][ds] += processor.column_accumulator(ak.to_numpy(gen_dxy, False))
+    def fill_arrays(self, events, out, ds, stage):
+        out[f"{stage}_dxy_gen"][ds] += processor.column_accumulator(ak.to_numpy(events.gen_dxy, False))
 
     def dsa_selection(self, dsa):
         return (dsa.pt > 5.) \
@@ -197,6 +231,18 @@ class MuonAnalysis(processor.ProcessorABC):
         cut = (ak.sum(any_pass, axis=-1) >= 2) & (ak.sum(dr_1_pass, axis=-1) >= 1) & (
                 ak.sum(dr_2_pass, axis=-1) >= 1)
         return cut
+
+    def fill_histos(self, events, out, ds, dsa_1, dsa_2):
+        dsa_1 = dsa_1[:, 0]
+        dsa_2 = dsa_2[:, 0]
+        out["pt_dsa_1"].fill(ds=ds, pt_dsa=dsa_1.pt)
+        out["pt_dsa_2"].fill(ds=ds, pt_dsa=dsa_2.pt)
+        out["err_div_pt_dsa_1"].fill(ds=ds, pt_err=(dsa_1.pt_error / dsa_1.pt))
+        out["err_div_pt_dsa_2"].fill(ds=ds, pt_err=(dsa_2.pt_error / dsa_2.pt))
+        out["nhits_dsa_1"].fill(ds=ds, nhit=dsa_1.n_valid_hits)
+        out["nhits_dsa_2"].fill(ds=ds, nhit=dsa_2.n_valid_hits)
+        out["chi2ndof_dsa_1"].fill(ds=ds, chi2ndof=dsa_1.chi2/dsa_1.ndof)
+        out["chi2ndof_dsa_2"].fill(ds=ds, chi2ndof=dsa_2.chi2/dsa_2.ndof)
 
 
     def postprocess(self, accumulator):
