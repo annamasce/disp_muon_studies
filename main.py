@@ -13,10 +13,17 @@ args = parser.parse_args()
 
 tag = args.tag
 
+# old samples
 samples = {
-    "HNL1": ["/Users/mascella/cernbox/Analysis_files/HeavyNeutrino_trilepton_M-1_V-0_0949736805647_mu_massiveAndCKM_LO/merged_0.root"],
-    "2Mu2J": ["/Users/mascella/cernbox_shared_with_you/test/displaced_dimuon.root"]
+    "HNL1": ["/Users/mascella/cernbox/disp_muons/disp_muons_HNL1_svFix.root"],
+    "2Mu2J": ["/Users/mascella/cernbox/disp_muons/disp_muons_2Mu2J_svFix.root"]
 }
+
+# new samples with SV fix
+# samples = {
+#     "HNL1": ["/Users/mascella/cernbox/disp_muons_HNL1.root"],
+#     "2Mu2J": ["/Users/mascella/cernbox/disp_muons_2Mu2J.root"]
+# }
 
 result = processor.run_uproot_job(
     samples,
@@ -28,8 +35,8 @@ result = processor.run_uproot_job(
 
 hist.plot1d(result["pt_dsa_1"][re.compile("2Mu2J*")])
 plt.show()
-plt.hist(result["den_dxy_gen"]["2Mu2J"].value, range=[0, 500], bins=50)
-plt.hist(result["num_dxy_gen"]["2Mu2J"].value, range=[0, 500], bins=50)
+plt.hist(result["den_dimuon_deltaR"]["HNL1"].value, range=[0, 2], bins=20)
+plt.hist(result["num_dimuon_deltaR"]["HNL1"].value, range=[0, 2], bins=20)
 plt.show()
 with open("./Results/" + f'result_{args.tag}.pkl', 'wb') as f:
     pickle.dump(result, f)

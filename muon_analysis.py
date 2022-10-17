@@ -21,6 +21,14 @@ def delta_r(v1, v2):
     '''
     return np.sqrt(delta_r2(v1, v2))
 
+def delta_phi(v1, v2):
+    '''Calculates deltaPhi between two particles v1, v2 whose
+    phi methods return arrays.
+
+    '''
+    dphi = (v1.phi - v2.phi + np.pi) % (2 * np.pi) - np.pi
+    return dphi
+
 class MuonAnalysis(processor.ProcessorABC):
     def __init__(self):
         ds_axis = hist.Cat("ds", "Primary dataset")
@@ -41,7 +49,11 @@ class MuonAnalysis(processor.ProcessorABC):
     @staticmethod
     def get_array_vars():
         return [
-            "dxy_gen"
+            "dxy_gen",
+            "dimuon_deltaR",
+            "dimuon_deltaEta",
+            "dimuon_deltaPhi",
+            "dimuon_pt"
         ]
 
     @staticmethod
@@ -140,9 +152,13 @@ class MuonAnalysis(processor.ProcessorABC):
         print("Den events with 2 DSA muons:", len(events))
         out["n_ev_two_dsa"][ds] += len(events)
         # Take all possible pairs of DSA muons
-        l1_idx, l2_idx = ak.unzip(ak.argcombinations(events.DSAMuon, 2))
-        dsa_1 = events.DSAMuon[l1_idx]
-        dsa_2 = events.DSAMuon[l2_idx]
+        # But first order the DSAMuon collection with decreasing pT
+        DSAMuon_ptOrdered = events.DSAMuon[ak.argsort(events.DSAMuon.pt, axis=-1, ascending=False)]
+        l1_idx, l2_idx = ak.unzip(ak.argcombinations(DSAMuon_ptOrdered, 2))
+        dsa_1 = DSAMuon_ptOrdered[l1_idx]
+        # print(dsa_1.pt)
+        dsa_2 = DSAMuon_ptOrdered[l2_idx]
+        # print(dsa_2.pt)
         if do_sel_dsa:
             dimuon_cut = self.dsa_selection(dsa_1) & self.dsa_selection(dsa_2)
             event_cut = (ak.sum(dimuon_cut, axis=-1) > 0)
@@ -161,8 +177,10 @@ class MuonAnalysis(processor.ProcessorABC):
         dsa_2 = dsa_2[cut][event_cut]
         print("Den events after DSA matching with gen muons:", len(events))
         out["n_ev_gen_matching"][ds] += len(events)
+        dsa_1 = dsa_1[:, 0]
+        dsa_2 = dsa_2[:, 0]
         self.fill_histos(events, out, ds, dsa_1, dsa_2)
-        self.fill_arrays(events, out, ds, "den")
+        self.fill_arrays(events, out, ds, "den", dsa_1, dsa_2)
         return events
 
     def process_num(self, events, out, ds, do_sel=True):
@@ -191,19 +209,25 @@ class MuonAnalysis(processor.ProcessorABC):
         out["n_ev_converging_fit"][ds] += len(events)
         print("Num events after DSA matching with gen muons:", len(events))
 
-        # Require good vertex prob
-        cut = (dimuons.ndof > 0) & (dimuons.svprob >= 0.001)
-        dimuons = dimuons[cut]
-        events = events[ak.num(dimuons) > 0]
-        dimuons = dimuons[ak.num(dimuons) > 0]
-        out["n_ev_sv_prob_cut"][ds] += len(events)
+        # # Require good vertex prob
+        # cut = (dimuons.ndof > 0) & (dimuons.svprob >= 0.001)
+        # dimuons = dimuons[cut]
+        # events = events[ak.num(dimuons) > 0]
+        # dimuons = dimuons[ak.num(dimuons) > 0]
+        # out["n_ev_sv_prob_cut"][ds] += len(events)
 
-        self.fill_arrays(events, out, ds, "num")
+        dsa_1 = events.DSAMuon[dimuons.l1Idx][:, 0]
+        dsa_2 = events.DSAMuon[dimuons.l2Idx][:, 0]
+        self.fill_arrays(events, out, ds, "num", dsa_1, dsa_2)
 
         return events, dimuons
 
-    def fill_arrays(self, events, out, ds, stage):
+    def fill_arrays(self, events, out, ds, stage, dsa_1, dsa_2):
         out[f"{stage}_dxy_gen"][ds] += processor.column_accumulator(ak.to_numpy(events.gen_dxy, False))
+        out[f"{stage}_dimuon_deltaR"][ds] += processor.column_accumulator(ak.to_numpy(delta_r(dsa_1, dsa_2), False))
+        out[f"{stage}_dimuon_deltaEta"][ds] += processor.column_accumulator(ak.to_numpy((dsa_1.eta - dsa_2.eta), False))
+        out[f"{stage}_dimuon_deltaPhi"][ds] += processor.column_accumulator(ak.to_numpy(delta_phi(dsa_1, dsa_2), False))
+        out[f"{stage}_dimuon_pt"][ds] += processor.column_accumulator(ak.to_numpy(np.sqrt(dsa_1.pt**2 + dsa_2.pt**2), False))
 
     def dsa_selection(self, dsa):
         return (dsa.pt > 5.) \
@@ -233,8 +257,6 @@ class MuonAnalysis(processor.ProcessorABC):
         return cut
 
     def fill_histos(self, events, out, ds, dsa_1, dsa_2):
-        dsa_1 = dsa_1[:, 0]
-        dsa_2 = dsa_2[:, 0]
         out["pt_dsa_1"].fill(ds=ds, pt_dsa=dsa_1.pt)
         out["pt_dsa_2"].fill(ds=ds, pt_dsa=dsa_2.pt)
         out["err_div_pt_dsa_1"].fill(ds=ds, pt_err=(dsa_1.pt_error / dsa_1.pt))
