@@ -35,8 +35,8 @@ result = processor.run_uproot_job(
 
 hist.plot1d(result["pt_dsa_1"][re.compile("2Mu2J*")])
 plt.show()
-plt.hist(result["den_dimuon_deltaR"]["HNL1"].value, range=[0, 2], bins=20)
-plt.hist(result["num_dimuon_deltaR"]["HNL1"].value, range=[0, 2], bins=20)
+plt.hist(result["den_dimuon_pt"]["HNL1"].value, range=[0, 100], bins=100)
+plt.hist(result["num_dimuon_pt"]["HNL1"].value, range=[0, 100], bins=100)
 plt.show()
 with open("./Results/" + f'result_{args.tag}.pkl', 'wb') as f:
     pickle.dump(result, f)

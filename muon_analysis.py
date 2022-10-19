@@ -24,10 +24,16 @@ def delta_r(v1, v2):
 def delta_phi(v1, v2):
     '''Calculates deltaPhi between two particles v1, v2 whose
     phi methods return arrays.
-
     '''
     dphi = (v1.phi - v2.phi + np.pi) % (2 * np.pi) - np.pi
     return dphi
+
+def sum_pt(v1, v2):
+    '''Calculate 2-particle pt for v1 and v2 whose pt, px and py method return arrays.
+    '''
+    sum_pt_2 = v1.pt**2 + v2.pt**2 + 2 * v1.pt * v2.pt * np.cos(v1.phi - v2.phi)
+    sum_pt = np.sqrt(sum_pt_2)
+    return sum_pt
 
 class MuonAnalysis(processor.ProcessorABC):
     def __init__(self):
@@ -227,7 +233,7 @@ class MuonAnalysis(processor.ProcessorABC):
         out[f"{stage}_dimuon_deltaR"][ds] += processor.column_accumulator(ak.to_numpy(delta_r(dsa_1, dsa_2), False))
         out[f"{stage}_dimuon_deltaEta"][ds] += processor.column_accumulator(ak.to_numpy((dsa_1.eta - dsa_2.eta), False))
         out[f"{stage}_dimuon_deltaPhi"][ds] += processor.column_accumulator(ak.to_numpy(delta_phi(dsa_1, dsa_2), False))
-        out[f"{stage}_dimuon_pt"][ds] += processor.column_accumulator(ak.to_numpy(np.sqrt(dsa_1.pt**2 + dsa_2.pt**2), False))
+        out[f"{stage}_dimuon_pt"][ds] += processor.column_accumulator(ak.to_numpy(sum_pt(dsa_1, dsa_2), False))
 
     def dsa_selection(self, dsa):
         return (dsa.pt > 5.) \
