@@ -22,7 +22,11 @@ class MuonAnalysis(processor.ProcessorABC):
     @staticmethod
     def get_array_vars():
         return [
-            "dxy_gen",
+            "Lxy_gen",
+            "dimuon_deltaR_gen",
+            "dimuon_deltaEta_gen",
+            "dimuon_deltaPhi_gen",
+            "dimuon_pt_gen",
             "dimuon_deltaR",
             "dimuon_deltaEta",
             "dimuon_deltaPhi",
@@ -91,7 +95,6 @@ class MuonAnalysis(processor.ProcessorABC):
             gen_vx = events.gen_muon[:, 0].vx
             gen_vy = events.gen_muon[:, 0].vy
             events["gen_dxy"] = np.sqrt(gen_vx ** 2 + gen_vy ** 2)
-        print(events.gen_dxy)
         self.process_ds(events, out, ds)
         if "2Mu2J" in ds:
             self.process_ds(events, out, ds + " high Lxy", mode="high_Lxy")
@@ -114,8 +117,23 @@ class MuonAnalysis(processor.ProcessorABC):
         else:
             print("Here I do stuff for whole ds")
         out["n_ev_lxy_cut"][ds] += len(events)
-        events = self.process_den(events, out, ds, do_sel_dsa=do_dsa_sel)
-        events, dimuons = self.process_num(events, out, ds, do_sel=do_dsa_sel)
+        # Isolate denominator events
+        events_den, dsa_1, dsa_2 = self.process_den(events, out, ds, do_sel_dsa=do_dsa_sel)
+
+        # Get dimuon and event selection for the numerator
+        event_cut, dimuon_cut = self.process_num(events_den, out, ds, do_sel=do_dsa_sel)
+
+        # If event passes selection save info for passing DSA muons, otherwise take leading DSA pair in denominator
+        dsa_1 = ak.where(event_cut, events_den.DSAMuon[events_den.DiDSAMuon[dimuon_cut].l1Idx], dsa_1)[:, 0]
+        dsa_2 = ak.where(event_cut, events_den.DSAMuon[events_den.DiDSAMuon[dimuon_cut].l2Idx], dsa_2)[:, 0]
+        self.fill_histos(events_den, out, ds, dsa_1, dsa_2)
+        self.fill_arrays(events_den, out, ds, "den", dsa_1, dsa_2)
+
+        events_num = events_den[event_cut]
+        dimuons_num = events_den.DiDSAMuon[dimuon_cut][event_cut]
+        dsa_1 = events_num.DSAMuon[dimuons_num.l1Idx][:, 0]
+        dsa_2 = events_num.DSAMuon[dimuons_num.l2Idx][:, 0]
+        self.fill_arrays(events_num, out, ds, "num", dsa_1, dsa_2)
 
 
     def process_den(self, events, out, ds, do_sel_dsa=True):
@@ -143,60 +161,53 @@ class MuonAnalysis(processor.ProcessorABC):
 
         # Require unique matching of each DSA pair with the gen muons
         gen_muons = events.gen_muon
-        cut = self.unique_matching_selection(dsa_1, dsa_2, gen_muons)
-        event_cut = (ak.sum(cut, axis=-1) > 0)
+        dimuon_cut = self.unique_matching_selection(dsa_1, dsa_2, gen_muons)
+        event_cut = (ak.sum(dimuon_cut, axis=-1) > 0)
         events = events[event_cut]
-        dsa_1 = dsa_1[cut][event_cut]
-        dsa_2 = dsa_2[cut][event_cut]
+        dsa_1 = dsa_1[dimuon_cut][event_cut]
+        dsa_2 = dsa_2[dimuon_cut][event_cut]
         print("Den events after DSA matching with gen muons:", len(events))
         out["n_ev_gen_matching"][ds] += len(events)
-        dsa_1 = dsa_1[:, 0]
-        dsa_2 = dsa_2[:, 0]
-        self.fill_histos(events, out, ds, dsa_1, dsa_2)
-        self.fill_arrays(events, out, ds, "den", dsa_1, dsa_2)
-        return events
+        return events, dsa_1, dsa_2
 
     def process_num(self, events, out, ds, do_sel=True):
         # Require at least a DSA pair
-        events = events[ak.num(events.DiDSAMuon) >= 1]
-        dimuons = events.DiDSAMuon[ak.num(events.DiDSAMuon) >= 1]
+        dimuons = events.DiDSAMuon
+        dimuon_cut = ak.broadcast_arrays(dimuons.pt, True)[1]
+        event_cut = (events.event >= 0)
         # print("Num events with a 2-DSA fit:", len(events))
 
         if do_sel:
-            cut = self.dsa_selection(events.DSAMuon[dimuons.l1Idx]) & self.dsa_selection(events.DSAMuon[dimuons.l2Idx])
-            dimuons = dimuons[cut]
-            events = events[ak.num(dimuons) > 0]
-            dimuons = dimuons[ak.num(dimuons) > 0]
+            dimuon_cut = dimuon_cut & self.dsa_selection(events.DSAMuon[dimuons.l1Idx]) & self.dsa_selection(events.DSAMuon[dimuons.l2Idx])
+            event_cut = event_cut & (ak.sum(dimuon_cut, axis=-1) > 0)
             # print("Num events with a 2-DSA fit after DSA selection:", len(events))
-        print("Num events with a 2-DSA fit:", len(events))
+        print("Num events with a 2-DSA fit:", ak.sum(event_cut))
 
         # Require unique matching of each DSA in a fitted pair with a gen hnl muon
         dsa_1 = events.DSAMuon[dimuons.l1Idx]
         dsa_2 = events.DSAMuon[dimuons.l2Idx]
         gen_muons = events.gen_muon
-        cut = self.unique_matching_selection(dsa_1, dsa_2, gen_muons)
-
-        dimuons = dimuons[cut]
-        events = events[ak.num(dimuons) > 0]
-        dimuons = dimuons[ak.num(dimuons) > 0]
-        out["n_ev_converging_fit"][ds] += len(events)
-        print("Num events after DSA matching with gen muons:", len(events))
+        dimuon_cut = dimuon_cut & self.unique_matching_selection(dsa_1, dsa_2, gen_muons)
+        event_cut = event_cut & (ak.sum(dimuon_cut, axis=-1) > 0)
 
         # # Require good vertex prob
-        # cut = (dimuons.ndof > 0) & (dimuons.svprob >= 0.001)
-        # dimuons = dimuons[cut]
-        # events = events[ak.num(dimuons) > 0]
-        # dimuons = dimuons[ak.num(dimuons) > 0]
+        # dimuon_cut = dimuon_cut & (dimuons.ndof > 0) & (dimuons.svprob >= 0.001)
+        # event_cut = event_cut & (ak.sum(dimuon_cut, axis=-1) > 0)
         # out["n_ev_sv_prob_cut"][ds] += len(events)
 
-        dsa_1 = events.DSAMuon[dimuons.l1Idx][:, 0]
-        dsa_2 = events.DSAMuon[dimuons.l2Idx][:, 0]
-        self.fill_arrays(events, out, ds, "num", dsa_1, dsa_2)
+        out["n_ev_converging_fit"][ds] += ak.sum(event_cut)
+        print("Num events after DSA matching with gen muons:", ak.sum(event_cut))
 
-        return events, dimuons
+        return event_cut, dimuon_cut
 
     def fill_arrays(self, events, out, ds, stage, dsa_1, dsa_2):
-        out[f"{stage}_dxy_gen"][ds] += processor.column_accumulator(ak.to_numpy(events.gen_dxy, False))
+        gen_muon_1 = events.gen_muon[:, 0]
+        gen_muon_2 = events.gen_muon[:, 1]
+        out[f"{stage}_dimuon_deltaR_gen"][ds] += processor.column_accumulator(ak.to_numpy(delta_r(gen_muon_1, gen_muon_2), False))
+        out[f"{stage}_dimuon_deltaEta_gen"][ds] += processor.column_accumulator(ak.to_numpy((gen_muon_1.eta - gen_muon_2.eta), False))
+        out[f"{stage}_dimuon_deltaPhi_gen"][ds] += processor.column_accumulator(ak.to_numpy(delta_phi(gen_muon_1, gen_muon_2), False))
+        out[f"{stage}_dimuon_pt_gen"][ds] += processor.column_accumulator(ak.to_numpy(sum_pt(gen_muon_1, gen_muon_2), False))
+        out[f"{stage}_Lxy_gen"][ds] += processor.column_accumulator(ak.to_numpy(events.gen_dxy, False))
         out[f"{stage}_dimuon_deltaR"][ds] += processor.column_accumulator(ak.to_numpy(delta_r(dsa_1, dsa_2), False))
         out[f"{stage}_dimuon_deltaEta"][ds] += processor.column_accumulator(ak.to_numpy((dsa_1.eta - dsa_2.eta), False))
         out[f"{stage}_dimuon_deltaPhi"][ds] += processor.column_accumulator(ak.to_numpy(delta_phi(dsa_1, dsa_2), False))
