@@ -13,16 +13,16 @@ args = parser.parse_args()
 
 tag = args.tag
 
-# old samples
+# new samples
 samples = {
     "HNL1": ["/Users/mascella/cernbox/disp_muons/disp_muons_HNL1_svFix.root"],
-    "2Mu2J": ["/Users/mascella/cernbox/disp_muons/disp_muons_2Mu2J_svFix.root"]
+    "2Mu2J": ["/Users/mascella/cernbox/disp_muons/nanoTuple_230120_MH-1000_MFF-20_CTau-200mm.root"]
 }
 
-# new samples with SV fix
+# # old samples - no SV fix
 # samples = {
-#     "HNL1": ["/Users/mascella/cernbox/disp_muons_HNL1.root"],
-#     "2Mu2J": ["/Users/mascella/cernbox/disp_muons_2Mu2J.root"]
+#     "HNL1": ["/Users/mascella/cernbox/disp_muons/disp_muons_HNL1_noSvFix.root"],
+#     "2Mu2J": ["/Users/mascella/cernbox_shared_with_you/test/displaced_dimuon.root"]
 # }
 
 result = processor.run_uproot_job(
@@ -33,7 +33,7 @@ result = processor.run_uproot_job(
     {"schema": NanoAODSchema},
 )
 
-hist.plot1d(result["pt_dsa_1"][re.compile("2Mu2J*")])
+hist.plot1d(result["lxy_significance"][re.compile("2Mu2J*")])
 plt.show()
 plt.hist(result["den_dimuon_pt"]["HNL1"].value, range=[0, 100], bins=100)
 plt.hist(result["num_dimuon_pt"]["HNL1"].value, range=[0, 100], bins=100)

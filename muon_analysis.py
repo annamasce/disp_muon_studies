@@ -30,7 +30,11 @@ class MuonAnalysis(processor.ProcessorABC):
             "dimuon_deltaR",
             "dimuon_deltaEta",
             "dimuon_deltaPhi",
-            "dimuon_pt"
+            "dimuon_pt",
+            "dxy_dsapair",
+            "dxy_dsapair_error",
+            "dxyz_dsapair",
+            "dz_dsapair"
         ]
 
     @staticmethod
@@ -52,6 +56,8 @@ class MuonAnalysis(processor.ProcessorABC):
         pt_err_axis = hist.Bin("pt_err", r"$p_{T}$ error/$p_{T}$", 20, 0., 1.2)
         nhit_axis = hist.Bin('nhit', r'N(hits)', 71, -0.5, 70.5)
         chi2ndof_axis = hist.Bin('chi2ndof', r'$\chi^2$/ndof', 20, 0., 5.)
+        lxy_pull_axis = hist.Bin('lxy_pull', r'$(reco L_{xy} - gen L_{xy})/\sigma_{L_{xy}}$', 20, -10, 10)
+        lxy_significance_axis = hist.Bin('lxy_significance', r'$L_{xy}/\sigma_{L_{xy}}$', 20, 0, 20)
 
         v_a_pairs = [
             ('pt_dsa_1', pt_dsa_axis),
@@ -62,6 +68,8 @@ class MuonAnalysis(processor.ProcessorABC):
             ('nhits_dsa_2', nhit_axis),
             ('chi2ndof_dsa_1', chi2ndof_axis),
             ('chi2ndof_dsa_2', chi2ndof_axis),
+            ('lxy_pull', lxy_pull_axis),
+            ('lxy_significance', lxy_significance_axis)
         ]
 
         return v_a_pairs
@@ -96,9 +104,9 @@ class MuonAnalysis(processor.ProcessorABC):
             gen_vy = events.gen_muon[:, 0].vy
             events["gen_dxy"] = np.sqrt(gen_vx ** 2 + gen_vy ** 2)
         self.process_ds(events, out, ds)
-        if "2Mu2J" in ds:
-            self.process_ds(events, out, ds + " high Lxy", mode="high_Lxy")
-            self.process_ds(events, out, ds + " low Lxy", mode="low_Lxy")
+        # if "2Mu2J" in ds:
+        self.process_ds(events, out, ds + " high Lxy", mode="high_Lxy")
+        self.process_ds(events, out, ds + " low Lxy", mode="low_Lxy")
 
         return out
 
@@ -127,13 +135,14 @@ class MuonAnalysis(processor.ProcessorABC):
         dsa_1 = ak.where(event_cut, events_den.DSAMuon[events_den.DiDSAMuon[dimuon_cut].l1Idx], dsa_1)[:, 0]
         dsa_2 = ak.where(event_cut, events_den.DSAMuon[events_den.DiDSAMuon[dimuon_cut].l2Idx], dsa_2)[:, 0]
         self.fill_histos(events_den, out, ds, dsa_1, dsa_2)
-        self.fill_arrays(events_den, out, ds, "den", dsa_1, dsa_2)
+        self.fill_arrays_common(events_den, out, ds, "den", dsa_1, dsa_2)
 
         events_num = events_den[event_cut]
         dimuons_num = events_den.DiDSAMuon[dimuon_cut][event_cut]
         dsa_1 = events_num.DSAMuon[dimuons_num.l1Idx][:, 0]
         dsa_2 = events_num.DSAMuon[dimuons_num.l2Idx][:, 0]
-        self.fill_arrays(events_num, out, ds, "num", dsa_1, dsa_2)
+        self.fill_arrays_common(events_num, out, ds, "num", dsa_1, dsa_2)
+        self.fill_dimuon_arrays(events_num, dimuons_num, out, ds)
 
 
     def process_den(self, events, out, ds, do_sel_dsa=True):
@@ -200,7 +209,7 @@ class MuonAnalysis(processor.ProcessorABC):
 
         return event_cut, dimuon_cut
 
-    def fill_arrays(self, events, out, ds, stage, dsa_1, dsa_2):
+    def fill_arrays_common(self, events, out, ds, stage, dsa_1, dsa_2):
         gen_muon_1 = events.gen_muon[:, 0]
         gen_muon_2 = events.gen_muon[:, 1]
         out[f"{stage}_dimuon_deltaR_gen"][ds] += processor.column_accumulator(ak.to_numpy(delta_r(gen_muon_1, gen_muon_2), False))
@@ -212,6 +221,26 @@ class MuonAnalysis(processor.ProcessorABC):
         out[f"{stage}_dimuon_deltaEta"][ds] += processor.column_accumulator(ak.to_numpy((dsa_1.eta - dsa_2.eta), False))
         out[f"{stage}_dimuon_deltaPhi"][ds] += processor.column_accumulator(ak.to_numpy(delta_phi(dsa_1, dsa_2), False))
         out[f"{stage}_dimuon_pt"][ds] += processor.column_accumulator(ak.to_numpy(sum_pt(dsa_1, dsa_2), False))
+
+    def fill_dimuon_arrays(self, events, dimuons, out, ds):
+        pv = events.PV
+        dimuon = dimuons[:, 0]
+        dxy2 = (dimuon.vtx_x - pv.x) ** 2 + (dimuon.vtx_y - pv.y) ** 2
+        dz2 = (dimuon.vtx_z - pv.z) ** 2
+        dxy = np.sqrt(dxy2)
+        dz = np.sqrt(dz2)
+        dxyz = np.sqrt(dxy2 + dz2)
+        dxy_err = np.sqrt((dimuon.vtx_x - pv.x) ** 2 * dimuon.vtx_ex ** 2 + (dimuon.vtx_y - pv.y) ** 2 * dimuon.vtx_ey ** 2) / dxy
+
+        out[f'num_dxy_dsapair'][ds] += processor.column_accumulator(ak.to_numpy(dxy, False))
+        out[f'num_dz_dsapair'][ds] += processor.column_accumulator(ak.to_numpy(dz, False))
+        out[f'num_dxyz_dsapair'][ds] += processor.column_accumulator(ak.to_numpy(dxyz, False))
+        out[f'num_dxy_dsapair_error'][ds] += processor.column_accumulator(ak.to_numpy(dxy_err, False))
+
+        # Fill lxy histos
+        out["lxy_pull"].fill(ds=ds, lxy_pull=(dxy - events.gen_dxy) / dxy_err)
+        out["lxy_significance"].fill(ds=ds, lxy_significance=dxy / dxy_err)
+
 
     def dsa_selection(self, dsa):
         return (dsa.pt > 5.) \
