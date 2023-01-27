@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import pickle
 import argparse
 import re
-from coffea import processor, hist
+from coffea import processor
 from coffea.nanoevents import NanoAODSchema
 from muon_analysis import MuonAnalysis
 
@@ -15,8 +15,10 @@ tag = args.tag
 
 # new samples
 samples = {
-    "HNL1": ["/Users/mascella/cernbox/disp_muons/disp_muons_HNL1_svFix.root"],
-    "2Mu2J": ["/Users/mascella/cernbox/disp_muons/nanoTuple_230120_MH-1000_MFF-20_CTau-200mm.root"]
+    # "HNL1": ["/Users/mascella/cernbox/disp_muons/disp_muons_HNL1_svFix.root"],
+    "2Mu2J_MH-1000_MFF-150": ["/Users/mascella/cernbox/disp_muons/disp_muons_2Mu2J_svFix.root"],
+    "2Mu2J_MH-1000_MFF-20": ["/Users/mascella/cernbox/disp_muons/nanoTuple_230120_MH-1000_MFF-20_CTau-200mm.root"],
+    "2Mu2J_MH-125_MFF-20": ["/Users/mascella/cernbox/disp_muons/nanoTuple_230126_MH-125_MFF-20_CTau-1300mm.root"],
 }
 
 # # old samples - no SV fix
@@ -33,10 +35,12 @@ result = processor.run_uproot_job(
     {"schema": NanoAODSchema},
 )
 
-hist.plot1d(result["lxy_significance"][re.compile("2Mu2J*")])
+# plotting pt DSA1 for all datasets
+result["pt_dsa_1"][:, :].plot1d()
+plt.legend()
 plt.show()
-plt.hist(result["den_dimuon_pt"]["HNL1"].value, range=[0, 100], bins=100)
-plt.hist(result["num_dimuon_pt"]["HNL1"].value, range=[0, 100], bins=100)
-plt.show()
+# plt.hist(result["den_dimuon_pt"]["2Mu2J M-150"].value, range=[0, 1000], bins=100)
+# plt.hist(result["num_dimuon_pt"]["2Mu2J M-150"].value, range=[0, 1000], bins=100)
+# plt.show()
 with open("./Results/" + f'result_{args.tag}.pkl', 'wb') as f:
     pickle.dump(result, f)

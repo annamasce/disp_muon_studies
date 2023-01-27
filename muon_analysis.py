@@ -1,19 +1,22 @@
-from coffea import processor, hist
+from coffea import processor
+import hist
+from hist import Hist
 import awkward as ak
 from helpers import *
 
 class MuonAnalysis(processor.ProcessorABC):
     def __init__(self):
-        ds_axis = hist.Cat("ds", "Primary dataset")
-        acc_dict = {var: hist.Hist("Counts", ds_axis, axis) for var, axis in self.get_var_axis_pairs()}
+        ds_axis = hist.axis.StrCategory([], growth=True, name="ds", label="Primary dataset")
+        acc_dict_hist1d = {var: Hist(ds_axis, axis, storage="weight") for var, axis in self.get_var_axis_pairs()}
+        acc_dict_hist2d = {var: Hist(ds_axis, axis_x, axis_y, storage="weight") for var, axis_x, axis_y in self.get_var_axis_2d()}
+        acc_dict = {**acc_dict_hist1d, **acc_dict_hist2d}
         for stage in self.get_selections():
             acc_dict[f'n_ev_{stage}'] = processor.defaultdict_accumulator(int)
             # acc_dict[f'sumw_{stage}'] = processor.defaultdict_accumulator(float)
         for var in self.get_array_vars():
             acc_dict[f'num_{var}'] = processor.dict_accumulator()
             acc_dict[f'den_{var}'] = processor.dict_accumulator()
-        # acc_dict['sel_array'] = processor.dict_accumulator()
-        self._accumulator = processor.dict_accumulator(acc_dict)
+        self._accumulator = acc_dict
 
     @property
     def accumulator(self):
@@ -52,12 +55,15 @@ class MuonAnalysis(processor.ProcessorABC):
     @staticmethod
     def get_var_axis_pairs():
 
-        pt_dsa_axis = hist.Bin("pt_dsa", r"$p_{T}$ [GeV]", 20, 0., 600)
-        pt_err_axis = hist.Bin("pt_err", r"$p_{T}$ error/$p_{T}$", 20, 0., 1.2)
-        nhit_axis = hist.Bin('nhit', r'N(hits)', 71, -0.5, 70.5)
-        chi2ndof_axis = hist.Bin('chi2ndof', r'$\chi^2$/ndof', 20, 0., 5.)
-        lxy_pull_axis = hist.Bin('lxy_pull', r'$(reco L_{xy} - gen L_{xy})/\sigma_{L_{xy}}$', 20, -10, 10)
-        lxy_significance_axis = hist.Bin('lxy_significance', r'$L_{xy}/\sigma_{L_{xy}}$', 20, 0, 20)
+        pt_dsa_axis = hist.axis.Regular(20, 0.0, 600.0, name="pt_dsa", label=r"$p_{T}$ [GeV]")
+        pt_err_axis = hist.axis.Regular(20, 0.0, 1.2, name="pt_err", label=r"$p_{T}$ error/$p_{T}$")
+        nhit_axis = hist.axis.Regular(71, -0.5, 70.5, name="nhit", label=r"N(hits)")
+        chi2ndof_axis = hist.axis.Regular(20, 0.0, 5.0, name="chi2ndof", label=r"$\chi^2$/ndof")
+        lxy_axis = hist.axis.Regular(20, 0.0, 600.0, name="lxy", label=r"reco $L_{xy}$ [cm]")
+        lxy_res_axis = hist.axis.Regular(20, -50.0, 50.0, name="lxy_res",
+                                          label=r"$reco L_{xy} - gen L_{xy}$ [cm]")
+        lxy_pull_axis = hist.axis.Regular(20, -10.0, 10.0, name="lxy_pull", label=r"$(reco L_{xy} - gen L_{xy})/\sigma_{L_{xy}}$")
+        lxy_significance_axis = hist.axis.Regular(100, 0.0, 100.0, name="lxy_significance", label=r"$L_{xy}/\sigma_{L_{xy}}$")
 
         v_a_pairs = [
             ('pt_dsa_1', pt_dsa_axis),
@@ -68,15 +74,30 @@ class MuonAnalysis(processor.ProcessorABC):
             ('nhits_dsa_2', nhit_axis),
             ('chi2ndof_dsa_1', chi2ndof_axis),
             ('chi2ndof_dsa_2', chi2ndof_axis),
-            ('lxy_pull', lxy_pull_axis),
-            ('lxy_significance', lxy_significance_axis)
+            ('dimuon_lxy', lxy_axis),
+            ('dimuon_lxy_res', lxy_res_axis),
+            ('dimuon_lxy_pull', lxy_pull_axis),
+            ('dimuon_lxy_significance', lxy_significance_axis),
+
         ]
 
         return v_a_pairs
 
+    @staticmethod
+    def get_var_axis_2d():
+        lxy_axis = hist.axis.Regular(50, 0.0, 600.0, name="lxy", label=r"reco $L_{xy}$ [cm]")
+        lxy_err_axis = hist.axis.Regular(50, 0.0, 100.0, name="lxy_err", label=r"$\sigma_{L_{xy}} [cm]$")
+
+        # (name, x axis, y axis)
+        v_a_2d = [
+            ('lxy_err_VS_lxy', lxy_axis, lxy_err_axis)
+        ]
+
+        return v_a_2d
+
     # we will receive a NanoEvents instead of a coffea DataFrame
     def process(self, events):
-        out = self.accumulator.identity()
+        out = self.accumulator
         ds = events.metadata["dataset"]
 
         if "HNL" in ds:
@@ -134,7 +155,7 @@ class MuonAnalysis(processor.ProcessorABC):
         # If event passes selection save info for passing DSA muons, otherwise take leading DSA pair in denominator
         dsa_1 = ak.where(event_cut, events_den.DSAMuon[events_den.DiDSAMuon[dimuon_cut].l1Idx], dsa_1)[:, 0]
         dsa_2 = ak.where(event_cut, events_den.DSAMuon[events_den.DiDSAMuon[dimuon_cut].l2Idx], dsa_2)[:, 0]
-        self.fill_histos(events_den, out, ds, dsa_1, dsa_2)
+        self.fill_histos_singleMuon(events_den, out, ds, dsa_1, dsa_2)
         self.fill_arrays_common(events_den, out, ds, "den", dsa_1, dsa_2)
 
         events_num = events_den[event_cut]
@@ -142,7 +163,7 @@ class MuonAnalysis(processor.ProcessorABC):
         dsa_1 = events_num.DSAMuon[dimuons_num.l1Idx][:, 0]
         dsa_2 = events_num.DSAMuon[dimuons_num.l2Idx][:, 0]
         self.fill_arrays_common(events_num, out, ds, "num", dsa_1, dsa_2)
-        self.fill_dimuon_arrays(events_num, dimuons_num, out, ds)
+        self.save_dimuon_info(events_num, dimuons_num, out, ds)
 
 
     def process_den(self, events, out, ds, do_sel_dsa=True):
@@ -222,7 +243,7 @@ class MuonAnalysis(processor.ProcessorABC):
         out[f"{stage}_dimuon_deltaPhi"][ds] += processor.column_accumulator(ak.to_numpy(delta_phi(dsa_1, dsa_2), False))
         out[f"{stage}_dimuon_pt"][ds] += processor.column_accumulator(ak.to_numpy(sum_pt(dsa_1, dsa_2), False))
 
-    def fill_dimuon_arrays(self, events, dimuons, out, ds):
+    def save_dimuon_info(self, events, dimuons, out, ds):
         pv = events.PV
         dimuon = dimuons[:, 0]
         dxy2 = (dimuon.vtx_x - pv.x) ** 2 + (dimuon.vtx_y - pv.y) ** 2
@@ -237,9 +258,14 @@ class MuonAnalysis(processor.ProcessorABC):
         out[f'num_dxyz_dsapair'][ds] += processor.column_accumulator(ak.to_numpy(dxyz, False))
         out[f'num_dxy_dsapair_error'][ds] += processor.column_accumulator(ak.to_numpy(dxy_err, False))
 
-        # Fill lxy histos
-        out["lxy_pull"].fill(ds=ds, lxy_pull=(dxy - events.gen_dxy) / dxy_err)
-        out["lxy_significance"].fill(ds=ds, lxy_significance=dxy / dxy_err)
+        # Fill lxy 1D histos
+        out["dimuon_lxy_pull"].fill(ds=ds, lxy_pull=(dxy - events.gen_dxy) / dxy_err)
+        out["dimuon_lxy_significance"].fill(ds=ds, lxy_significance=dxy / dxy_err)
+        out["dimuon_lxy"].fill(ds=ds, lxy=dxy)
+        out["dimuon_lxy_res"].fill(ds=ds, lxy_res=(dxy - events.gen_dxy))
+
+        # Fill lxy 2D histos
+        out["lxy_err_VS_lxy"].fill(ds=ds, lxy_err=dxy_err, lxy=dxy)
 
 
     def dsa_selection(self, dsa):
@@ -269,7 +295,7 @@ class MuonAnalysis(processor.ProcessorABC):
                 ak.sum(dr_2_pass, axis=-1) >= 1)
         return cut
 
-    def fill_histos(self, events, out, ds, dsa_1, dsa_2):
+    def fill_histos_singleMuon(self, events, out, ds, dsa_1, dsa_2):
         out["pt_dsa_1"].fill(ds=ds, pt_dsa=dsa_1.pt)
         out["pt_dsa_2"].fill(ds=ds, pt_dsa=dsa_2.pt)
         out["err_div_pt_dsa_1"].fill(ds=ds, pt_err=(dsa_1.pt_error / dsa_1.pt))
@@ -278,6 +304,7 @@ class MuonAnalysis(processor.ProcessorABC):
         out["nhits_dsa_2"].fill(ds=ds, nhit=dsa_2.n_valid_hits)
         out["chi2ndof_dsa_1"].fill(ds=ds, chi2ndof=dsa_1.chi2/dsa_1.ndof)
         out["chi2ndof_dsa_2"].fill(ds=ds, chi2ndof=dsa_2.chi2/dsa_2.ndof)
+
 
 
     def postprocess(self, accumulator):
