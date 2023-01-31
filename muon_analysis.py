@@ -63,7 +63,7 @@ class MuonAnalysis(processor.ProcessorABC):
         lxy_res_axis = hist.axis.Regular(20, -50.0, 50.0, name="lxy_res",
                                           label=r"$reco L_{xy} - gen L_{xy}$ [cm]")
         lxy_pull_axis = hist.axis.Regular(20, -10.0, 10.0, name="lxy_pull", label=r"$(reco L_{xy} - gen L_{xy})/\sigma_{L_{xy}}$")
-        lxy_significance_axis = hist.axis.Regular(100, 0.0, 100.0, name="lxy_significance", label=r"$L_{xy}/\sigma_{L_{xy}}$")
+        lxy_significance_axis = hist.axis.Regular(20, 0.0, 100.0, name="lxy_significance", label=r"$L_{xy}/\sigma_{L_{xy}}$")
 
         v_a_pairs = [
             ('pt_dsa_1', pt_dsa_axis),
